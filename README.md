@@ -8,7 +8,7 @@ and credit ledger as the web application.
 After the first npm release is published:
 
 ```bash
-npm install --global pixelo-cli
+npm install --global @pixelo-ai/cli
 pixelo auth login
 ```
 
@@ -90,7 +90,7 @@ package tarballs are intentionally untracked.
 
 Publishing the GitHub Release runs the npm workflow. The repository must have
 an `npm` environment with an `NPM_TOKEN` secret authorized to publish
-`pixelo-cli`. The workflow rejects a tag that does not exactly match the package
+`@pixelo-ai/cli`. The workflow rejects a tag that does not exactly match the package
 version and publishes with npm provenance.
 
 ## License
