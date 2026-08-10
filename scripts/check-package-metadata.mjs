@@ -5,7 +5,7 @@ const root = resolve(import.meta.dirname, "..");
 const packageMetadata = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 
 const failures = [];
-if (packageMetadata.name !== "pixelo-cli") failures.push("npm package name must remain pixelo-cli");
+if (packageMetadata.name !== "@pixelo-ai/cli") failures.push("npm package name must remain @pixelo-ai/cli");
 if (packageMetadata.pixelo?.clientId !== "pixelo-cli") failures.push("public device client id must remain pixelo-cli");
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(packageMetadata.version)) failures.push("version must be valid SemVer");
 if (packageMetadata.bin?.pixelo !== "./dist/pixelo.js") failures.push("pixelo binary must resolve to ./dist/pixelo.js");
