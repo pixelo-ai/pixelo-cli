@@ -5,14 +5,10 @@ and credit ledger as the web application.
 
 ## Install
 
-After the first npm release is published:
-
 ```bash
 npm install --global @pixelo-ai/cli
 pixelo auth login
 ```
-
-Until then, build the CLI from this repository with the development steps below.
 
 ## Commands
 
@@ -88,10 +84,11 @@ package tarballs are intentionally untracked.
 3. Merge the release commit to `main`.
 4. Create a GitHub Release with tag `v<version>`.
 
-Publishing the GitHub Release runs the npm workflow. The repository must have
-an `npm` environment with an `NPM_TOKEN` secret authorized to publish
-`@pixelo-ai/cli`. The workflow rejects a tag that does not exactly match the package
-version and publishes with npm provenance.
+Publishing the GitHub Release runs the npm workflow through npm Trusted
+Publishing. The npm package trusts GitHub Actions from the `pixelo-ai/pixelo-cli`
+repository, workflow `publish.yml`, and environment `npm` for `npm publish` only.
+No long-lived npm token is required. The workflow rejects a tag that does not
+exactly match the package version and npm automatically records provenance.
 
 ## License
 
