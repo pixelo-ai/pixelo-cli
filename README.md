@@ -89,11 +89,11 @@ package tarballs are intentionally untracked.
 3. Merge the release commit to `main`.
 4. Create a GitHub Release with tag `v<version>`.
 
-Publishing the GitHub Release runs the npm workflow through npm Trusted
-Publishing. The npm package trusts GitHub Actions from the `pixelo-ai/pixelo-cli`
-repository, workflow `publish.yml`, and environment `npm` for `npm publish` only.
-No long-lived npm token is required. The workflow rejects a tag that does not
-exactly match the package version and npm automatically records provenance.
+Publishing the GitHub Release runs the environment-protected npm workflow. It
+uses the repository's scoped `NPM_TOKEN`, rejects a tag that does not exactly
+match the package version, and records npm provenance. A failed release can be
+retried manually only by supplying an existing release tag; the workflow checks
+out and revalidates that exact tag before publishing.
 
 ## License
 
