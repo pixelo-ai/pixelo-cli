@@ -11,7 +11,7 @@ Usage:
   pixelo auth login                       Sign in via device code (opens browser)
   pixelo auth status                      Show the signed-in account and balance
   pixelo auth logout                      Remove stored credentials
-  pixelo models list [--type image|video] List available models
+  pixelo models list [--type image|video] List model IDs and the current default
   pixelo generate image "<prompt>"        Generate an image
       [--model <id>] [--aspect-ratio 1:1] [--count N] [--negative-prompt "..."] [--wait] [--output <path>]
   pixelo generate video "<prompt>"        Generate a video
@@ -23,6 +23,9 @@ Global flags:
   --json          Machine-readable output
   --api-url <url> Override the API origin (or set PIXELO_API_URL)
   --version, --help
+
+Omit --model to use the default marked by "pixelo models list". The resolved
+model is always reported; pass --model <id> for reproducible selection.
 
 Requires a paid Pixelo plan. Manage connected devices at pixelo.ai/app/settings/connected-apps.`;
 

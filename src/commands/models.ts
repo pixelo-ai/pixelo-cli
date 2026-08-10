@@ -8,6 +8,7 @@ type Model = {
   calculatedCost?: number;
   baseCost?: number;
   isFreeTierAvailable?: boolean;
+  systemDefaultType?: string | null;
 };
 
 export async function listModels(flags: { type?: string; json?: boolean; apiUrl?: string }): Promise<void> {
@@ -26,7 +27,8 @@ export async function listModels(flags: { type?: string; json?: boolean; apiUrl?
     for (const model of list) {
       const cost = model.calculatedCost || model.baseCost;
       console.log(
-        `${model.id.padEnd(44)} ${model.type.padEnd(7)} ${cost ? `${cost} credits` : ""}`,
+        `${model.id.padEnd(44)} ${model.type.padEnd(7)} ${cost ? `${cost} credits` : ""}` +
+          `${model.systemDefaultType === model.type ? "  [default]" : ""}`,
       );
     }
     if (list.length === 0) console.log("No models found.");

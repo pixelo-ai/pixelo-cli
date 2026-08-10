@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { api, printApiError } from "../lib/api.js";
+import { resolveApiUrl } from "../lib/config.js";
 import { downloadOutputAtomic } from "../lib/download-output.js";
 import { CLI_EXIT, CliCommandError } from "../lib/errors.js";
 
@@ -7,6 +8,8 @@ type GenerationStatus = {
   id: string;
   status: "PENDING" | "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
   type: string;
+  model: string | null;
+  webUrl: string;
   creditsUsed: number | null;
   outputs: Array<{ url: string; permanent: boolean; format: string }>;
   failureReason: string | null;
@@ -15,6 +18,16 @@ type GenerationStatus = {
     credits: number;
     refundedAt: string | null;
   };
+};
+
+type GenerationAccepted = {
+  id: string;
+  status: string;
+  queue: string;
+  creditsCharged: number;
+  model: string;
+  modelSource: "default" | "requested";
+  webUrl: string;
 };
 
 type GenerationFlags = {
@@ -39,7 +52,7 @@ function recovery(id: string) {
   return { command: `pixelo generations get ${id} --wait`, generation_id: id };
 }
 
-function acceptedEnvelope(created: { id: string; status: string; queue: string; creditsCharged: number }, kind: string) {
+function acceptedEnvelope(created: GenerationAccepted, kind: string) {
   return {
     version: CONTRACT_VERSION,
     outcome: "accepted",
@@ -49,24 +62,60 @@ function acceptedEnvelope(created: { id: string; status: string; queue: string; 
       status: created.status,
       queue: created.queue,
       credits_charged: created.creditsCharged,
+      model: created.model,
+      model_source: created.modelSource,
+      web_url: created.webUrl,
     },
     recovery: recovery(created.id),
   };
 }
 
+const STORAGE_KEY_PREFIXES = ["public/", "media/", "video-agent/", "timeline/"];
+
+function normalizeOutputUrl(value: string, apiUrl?: string): string | null {
+  try {
+    const url = new URL(value);
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.protocol === "https:" || (url.protocol === "http:" && loopback)) return url.toString();
+    return null;
+  } catch {
+    const key = value.replace(/^\/+/, "");
+    if (!STORAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) return null;
+    return `${resolveApiUrl(apiUrl)}/api/media?key=${encodeURIComponent(key)}`;
+  }
+}
+
+function normalizeStatusOutputs(status: GenerationStatus, apiUrl?: string) {
+  return {
+    ...status,
+    outputs: status.outputs.map((output) => ({
+      ...output,
+      url: normalizeOutputUrl(output.url, apiUrl),
+    })),
+  };
+}
+
 async function presentTerminalOrCurrent(status: GenerationStatus, flags: GenerationFlags): Promise<void> {
+  const presentedStatus = normalizeStatusOutputs(status, flags.apiUrl);
   let savedTo: string | undefined;
   if (flags.output) {
     if (status.status !== "COMPLETED") {
       throw new CliCommandError("--output requires a completed generation; use it with --wait.", CLI_EXIT.OUTPUT);
     }
-    if (status.outputs.length !== 1) {
+    if (presentedStatus.outputs.length !== 1) {
       throw new CliCommandError("--output requires exactly one generated media file.", CLI_EXIT.OUTPUT);
     }
+    const outputUrl = presentedStatus.outputs[0].url;
+    if (!outputUrl) {
+      throw new CliCommandError(
+        `The generation has no usable media URL. Open it in Pixelo: ${status.webUrl}`,
+        CLI_EXIT.OUTPUT,
+      );
+    }
     savedTo = await downloadOutputAtomic({
-      url: status.outputs[0].url,
+      url: outputUrl,
       destination: flags.output,
-      format: status.outputs[0].format,
+      format: presentedStatus.outputs[0].format,
     });
   }
 
@@ -79,15 +128,19 @@ async function presentTerminalOrCurrent(status: GenerationStatus, flags: Generat
     jsonLine({
       version: CONTRACT_VERSION,
       outcome,
-      generation: status,
+      generation: presentedStatus,
       ...(savedTo ? { saved_to: savedTo } : {}),
       recovery: recovery(status.id),
     });
   } else if (status.status === "COMPLETED") {
     console.log(`✓ ${status.type.toLowerCase()} ready (${status.creditsUsed} credits)`);
-    for (const output of status.outputs) {
-      console.log(`  ${output.url}${output.permanent ? "" : "  (temporary link — save it now)"}`);
+    if (status.model) console.log(`  model: ${status.model}`);
+    for (const output of presentedStatus.outputs) {
+      if (output.url) {
+        console.log(`  download: ${output.url}${output.permanent ? "" : "  (temporary link — save it now)"}`);
+      }
     }
+    console.log(`  view in Pixelo: ${status.webUrl}`);
     if (savedTo) console.log(`  saved atomically to ${savedTo}`);
   } else if (status.status === "FAILED") {
     const refund = status.refund.state === "REFUNDED"
@@ -177,7 +230,7 @@ export async function generate(
     if (kind === "video" && flags.duration) body.duration = flags.duration;
 
     const operationKey = randomUUID();
-    const created = await api<{ id: string; status: string; queue: string; creditsCharged: number }>(
+    const created = await api<GenerationAccepted>(
       "/api/v1/generations",
       {
         method: "POST",
@@ -194,6 +247,7 @@ export async function generate(
         `✓ queued ${kind} ${created.id} (${created.creditsCharged} credits` +
           `${created.queue === "SLOW" ? ", slow queue" : ""})`,
       );
+      console.error(`  model: ${created.model}${created.modelSource === "default" ? " (Pixelo default; override with --model)" : ""}`);
     }
 
     if (flags.wait || flags.output) {
@@ -207,4 +261,4 @@ export async function generate(
   }
 }
 
-export { acceptedEnvelope, pollGeneration };
+export { acceptedEnvelope, normalizeOutputUrl, pollGeneration };

@@ -17,11 +17,16 @@ pixelo auth login
 pixelo auth status
 pixelo auth logout
 pixelo models list --type image
-pixelo generate image "a red fox in snow" --wait
+pixelo generate image "a red fox in snow" --model <model-id> --wait
 pixelo generate video "waves at sunset" --duration 5 --wait
 pixelo generations get <generation-id> --wait
 pixelo account
 ```
+
+`--model` selects an exact model ID from `pixelo models list`. If it is omitted,
+Pixelo uses the marked server default and the CLI reports that resolved model in
+both terminal and JSON output. Completed output includes a directly usable media
+URL plus the stable generation page in your Pixelo library.
 
 `--output <path>` implies `--wait`, requires exactly one completed output, and
 never overwrites an existing file. The download is validated and written by a

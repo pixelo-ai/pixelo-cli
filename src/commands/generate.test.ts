@@ -38,6 +38,8 @@ function completedStatus() {
     id: "generation-1",
     status: "COMPLETED",
     type: "IMAGE",
+    model: "google-nano-banana-2-lite",
+    webUrl: "https://pixelo.ai/app/gen/generation-1",
     creditsUsed: 4,
     outputs: [{ url: "https://cdn.pixelo.ai/one.png", permanent: true, format: "png" }],
     failureReason: null,
@@ -80,6 +82,9 @@ describe("stable generation command contract", () => {
       status: "QUEUED",
       queue: "FAST",
       creditsCharged: 4,
+      model: "google-nano-banana-2-lite",
+      modelSource: "default",
+      webUrl: "https://pixelo.ai/app/gen/generation-1",
     })) as unknown as typeof fetch;
 
     await generate("image", "a fox", { json: true, apiUrl: ORIGIN });
@@ -94,6 +99,9 @@ describe("stable generation command contract", () => {
         status: "QUEUED",
         queue: "FAST",
         credits_charged: 4,
+        model: "google-nano-banana-2-lite",
+        model_source: "default",
+        web_url: "https://pixelo.ai/app/gen/generation-1",
       },
       recovery: {
         command: "pixelo generations get generation-1 --wait",
@@ -105,7 +113,15 @@ describe("stable generation command contract", () => {
   test("emits ordered accepted and completed envelopes when waiting", async () => {
     globalThis.fetch = mock(async (input: string | URL | Request) => {
       if (String(input).endsWith("/api/v1/generations")) {
-        return jsonResponse({ id: "generation-1", status: "QUEUED", queue: "FAST", creditsCharged: 4 });
+        return jsonResponse({
+          id: "generation-1",
+          status: "QUEUED",
+          queue: "FAST",
+          creditsCharged: 4,
+          model: "google-nano-banana-2-lite",
+          modelSource: "default",
+          webUrl: "https://pixelo.ai/app/gen/generation-1",
+        });
       }
       return jsonResponse(completedStatus());
     }) as unknown as typeof fetch;
@@ -114,6 +130,34 @@ describe("stable generation command contract", () => {
 
     expect(stdout.map((line) => JSON.parse(line).outcome)).toEqual(["accepted", "completed"]);
     expect(JSON.parse(stdout[1]).generation.id).toBe("generation-1");
+  });
+
+  test("shows the resolved model, a usable media URL, and the Pixelo asset page", async () => {
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/api/v1/generations")) {
+        return jsonResponse({
+          id: "generation-1",
+          status: "QUEUED",
+          queue: "FAST",
+          creditsCharged: 4,
+          model: "google-nano-banana-2-lite",
+          modelSource: "default",
+          webUrl: "https://pixelo.ai/app/gen/generation-1",
+        });
+      }
+      return jsonResponse({
+        ...completedStatus(),
+        outputs: [{ url: "media/user-1/one.png", permanent: true, format: "png" }],
+      });
+    }) as unknown as typeof fetch;
+
+    await generate("image", "a fox", { wait: true, apiUrl: ORIGIN });
+
+    const output = [...stderr, ...stdout].join("\n");
+    expect(output).toContain("google-nano-banana-2-lite");
+    expect(output).toContain("https://api.pixelo.ai/api/media?key=media%2Fuser-1%2Fone.png");
+    expect(output).toContain("https://pixelo.ai/app/gen/generation-1");
+    expect(output).not.toContain("\n  media/user-1/one.png");
   });
 
   test("reports only authoritative refund state and exits as generation failure", async () => {
