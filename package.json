@@ -1,6 +1,6 @@
 {
   "name": "@pixelo-ai/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "pixelo": {
     "clientId": "pixelo-cli"
   },
@@ -23,7 +23,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "pixelo": "./dist/pixelo.js"
+    "pixelo": "dist/pixelo.js"
   },
   "files": [
     "dist"

@@ -8,7 +8,9 @@ const failures = [];
 if (packageMetadata.name !== "@pixelo-ai/cli") failures.push("npm package name must remain @pixelo-ai/cli");
 if (packageMetadata.pixelo?.clientId !== "pixelo-cli") failures.push("public device client id must remain pixelo-cli");
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(packageMetadata.version)) failures.push("version must be valid SemVer");
-if (packageMetadata.bin?.pixelo !== "./dist/pixelo.js") failures.push("pixelo binary must resolve to ./dist/pixelo.js");
+if (packageMetadata.bin?.pixelo !== "dist/pixelo.js") {
+  failures.push("pixelo binary must use the npm-safe canonical path dist/pixelo.js");
+}
 if (!packageMetadata.files?.includes("dist")) failures.push("published files must include dist");
 if (packageMetadata.repository?.url !== "git+https://github.com/pixelo-ai/pixelo-cli.git") {
   failures.push("repository URL must point to pixelo-ai/pixelo-cli");
