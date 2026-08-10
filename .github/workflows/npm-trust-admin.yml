@@ -1,0 +1,41 @@
+name: npm trusted publisher admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Inspect or configure the package trust relationship
+        required: true
+        type: choice
+        options:
+          - inspect
+          - configure
+
+permissions:
+  contents: read
+
+jobs:
+  trust:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install --global npm@11.15.0
+      - name: Inspect or configure trusted publisher
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TRUST_ACTION: ${{ inputs.action }}
+        run: |
+          npm trust list @pixelo-ai/cli --json
+          if [ "$TRUST_ACTION" = "configure" ]; then
+            npm trust github @pixelo-ai/cli \
+              --file publish.yml \
+              --repo pixelo-ai/pixelo-cli \
+              --env npm \
+              --allow-publish \
+              --yes
+            npm trust list @pixelo-ai/cli --json
+          fi
