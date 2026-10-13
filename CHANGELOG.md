@@ -3,6 +3,17 @@
 All notable changes to Pixelo CLI are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## 0.1.3 - 2026-10-13
+
+- Fix `generate` failing with `QUOTE_CONFLICT` for every model: the CLI now
+  requests a price quote for the exact inputs and submits it with the generation.
+- Add `--max-credits N` to refuse submission when the quoted price is higher.
+- Add `--idempotency-key <key>` so a rerun after an uncertain submission
+  recovers the original generation instead of creating and charging a second one.
+- JSON output now reports `rejected` (definitive, nothing charged) and
+  `uncertain` (submitted but unconfirmed) outcomes, and `accepted` includes the
+  idempotency key.
+
 ## 0.1.2 - 2026-08-10
 
 - Report the resolved requested or Pixelo-default model for queued and completed generations.

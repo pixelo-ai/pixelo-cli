@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { api, printApiError } from "../lib/api.js";
+import { api, ApiError, ApiTransportError, printApiError } from "../lib/api.js";
 import { resolveApiUrl } from "../lib/config.js";
 import { downloadOutputAtomic } from "../lib/download-output.js";
 import { CLI_EXIT, CliCommandError } from "../lib/errors.js";
@@ -30,6 +30,16 @@ type GenerationAccepted = {
   webUrl: string;
 };
 
+// Every Pixelo model is priced through a short-lived quote bound to the exact
+// request; generation must echo the same inputs plus the quoteId.
+type GenerationQuote = {
+  quoteId: string;
+  contractId: string;
+  credits: number;
+  expiresAt: string;
+  model: string;
+};
+
 type GenerationFlags = {
   wait?: boolean;
   json?: boolean;
@@ -52,10 +62,15 @@ function recovery(id: string) {
   return { command: `pixelo generations get ${id} --wait`, generation_id: id };
 }
 
-function acceptedEnvelope(created: GenerationAccepted, kind: string) {
+function quoteSummary(quote: GenerationQuote) {
+  return { credits: quote.credits, model: quote.model, expires_at: quote.expiresAt };
+}
+
+function acceptedEnvelope(created: GenerationAccepted, kind: string, idempotencyKey: string) {
   return {
     version: CONTRACT_VERSION,
     outcome: "accepted",
+    idempotency_key: idempotencyKey,
     generation: {
       id: created.id,
       kind,
@@ -210,6 +225,45 @@ export async function getGeneration(id: string, flags: GenerationFlags): Promise
   }
 }
 
+function uncertainHint(operationKey: string) {
+  return `rerun the same command with --idempotency-key ${operationKey} to recover it without a second charge`;
+}
+
+/**
+ * Machine-readable outcome for a generation that did not come back accepted.
+ * An HTTP error response is definitive: nothing was accepted or charged. A
+ * transport failure after submitting is uncertain; rerunning with the same
+ * idempotency key returns the original generation if the server accepted it.
+ */
+function reportUnaccepted(
+  error: unknown,
+  context: { submitted: boolean; operationKey: string; quote?: GenerationQuote },
+) {
+  const quote = context.quote ? { quote: quoteSummary(context.quote) } : {};
+  if (error instanceof ApiError) {
+    jsonLine({
+      version: CONTRACT_VERSION,
+      outcome: "rejected",
+      submitted: false,
+      error: {
+        code: typeof error.body.code === "string" ? error.body.code : error.body.reasonCode ?? null,
+        message: error.message,
+        status: error.status,
+      },
+      ...quote,
+    });
+  } else if (context.submitted && error instanceof ApiTransportError) {
+    jsonLine({
+      version: CONTRACT_VERSION,
+      outcome: "uncertain",
+      idempotency_key: context.operationKey,
+      error: { code: "SUBMISSION_UNCONFIRMED", message: error.message },
+      ...quote,
+      recovery: { hint: uncertainHint(context.operationKey) },
+    });
+  }
+}
+
 export async function generate(
   kind: "image" | "video",
   prompt: string,
@@ -219,8 +273,13 @@ export async function generate(
     count?: number;
     duration?: number;
     negativePrompt?: string;
+    maxCredits?: number;
+    idempotencyKey?: string;
   },
 ): Promise<void> {
+  const operationKey = flags.idempotencyKey ?? randomUUID();
+  let quote: GenerationQuote | undefined;
+  let submitted = false;
   try {
     const body: Record<string, unknown> = { kind, prompt };
     if (flags.model) body.model = flags.model;
@@ -229,19 +288,36 @@ export async function generate(
     if (kind === "image" && flags.negativePrompt) body.negativePrompt = flags.negativePrompt;
     if (kind === "video" && flags.duration) body.duration = flags.duration;
 
-    const operationKey = randomUUID();
+    // Quoting is free and creates nothing billable, so it may be retried.
+    quote = await api<GenerationQuote>("/api/v1/generation-quotes", {
+      method: "POST",
+      body,
+      apiUrl: flags.apiUrl,
+      maxRetries: 2,
+    });
+    if (typeof quote.quoteId !== "string" || typeof quote.credits !== "number") {
+      throw new ApiTransportError("The quote response was not understood; nothing was submitted.");
+    }
+    if (flags.maxCredits !== undefined && quote.credits > flags.maxCredits) {
+      throw new ApiError(400, {
+        code: "QUOTE_OVER_BUDGET",
+        error: `Quoted ${quote.credits} credits, above --max-credits ${flags.maxCredits}; nothing was submitted.`,
+      });
+    }
+
+    submitted = true;
     const created = await api<GenerationAccepted>(
       "/api/v1/generations",
       {
         method: "POST",
-        body,
+        body: { ...body, model: quote.model, quoteId: quote.quoteId },
         apiUrl: flags.apiUrl,
         idempotencyKey: operationKey,
       },
     );
 
     if (flags.json) {
-      jsonLine(acceptedEnvelope(created, kind));
+      jsonLine(acceptedEnvelope(created, kind, operationKey));
     } else {
       console.error(
         `✓ queued ${kind} ${created.id} (${created.creditsCharged} credits` +
@@ -257,6 +333,11 @@ export async function generate(
       console.error(`  follow up with: ${recovery(created.id).command}`);
     }
   } catch (error) {
+    if (flags.json) reportUnaccepted(error, { submitted, operationKey, quote });
+    else if (submitted && error instanceof ApiTransportError) {
+      console.error(`✗ the submission may or may not have been accepted: ${error.message}`);
+      console.error(`  ${uncertainHint(operationKey)}`);
+    }
     printApiError(error);
   }
 }

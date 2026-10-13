@@ -28,12 +28,25 @@ Pixelo uses the marked server default and the CLI reports that resolved model in
 both terminal and JSON output. Completed output includes a directly usable media
 URL plus the stable generation page in your Pixelo library.
 
+Every generation is priced first. The CLI requests a short-lived quote for the
+exact inputs, then submits the generation with that quote, so the credits charged
+always equal the price quoted. Add `--max-credits N` to refuse submission when
+the quote is higher than `N`.
+
 `--output <path>` implies `--wait`, requires exactly one completed output, and
 never overwrites an existing file. The download is validated and written by a
 same-directory temporary file plus `fsync` and atomic rename. Add `--json` for
 versioned newline-delimited JSON. A generation command writes an `accepted`
-envelope containing its durable generation ID before it polls, followed by a
-`completed`, `failed`, `timed_out`, or `polling_error` envelope where applicable.
+envelope containing its durable generation ID and idempotency key before it
+polls, followed by a `completed`, `failed`, `timed_out`, or `polling_error`
+envelope where applicable. A generation that is not accepted writes one of:
+
+- `rejected`: the server answered with an error (for example an expired quote,
+  a price above `--max-credits`, or insufficient credits). Nothing was accepted
+  or charged; `error.code` says why.
+- `uncertain`: the request was sent but no answer arrived. Rerun the same
+  command with the reported `--idempotency-key` to get the original generation
+  back if it was accepted, without a second charge.
 
 Exit codes are stable:
 
@@ -60,9 +73,11 @@ Exit codes are stable:
 - Logout asks the server to revoke the refresh credential before deleting the
   local bundle. If the server is unavailable, local deletion still occurs and
   the CLI says that remote revocation is unconfirmed.
-- Generation creates one operation idempotency key and reuses it for bounded
-  retries after network loss or a retryable `502`, `503`, or `504`. Policy and
-  validation failures are not retried.
+- Generation creates one operation idempotency key, or uses the one passed with
+  `--idempotency-key`, and reuses it for bounded retries after network loss or a
+  retryable `502`, `503`, or `504`. Policy and validation failures are not
+  retried. The key identifies the inputs, not the quote, so a later run with
+  the same key and inputs returns the original generation.
 - Refund wording comes only from durable server refund state. A failed
   generation without recorded refund evidence is reported as unconfirmed.
 
@@ -86,14 +101,12 @@ package tarballs are intentionally untracked.
 
 1. Update `version` in `package.json` and add the release to `CHANGELOG.md`.
 2. Run `bun install --frozen-lockfile && bun run release:check`.
-3. Merge the release commit to `main`.
-4. Create a GitHub Release with tag `v<version>`.
+3. Commit the release to `main` and tag it `v<version>`.
+4. From a clean checkout of that tag, signed in to npm with publish rights,
+   run `npm publish --access public`.
 
-Publishing the GitHub Release runs the environment-protected npm workflow. It
-uses the repository's scoped `NPM_TOKEN`, rejects a tag that does not exactly
-match the package version, and records npm provenance. A failed release can be
-retried manually only by supplying an existing release tag; the workflow checks
-out and revalidates that exact tag before publishing.
+Releases are published from a maintainer workstation. Hosted CI workflows are
+not used to build or publish this package.
 
 ## License
 

@@ -47,6 +47,54 @@ function completedStatus() {
   };
 }
 
+const QUOTE = {
+  quoteId: "quote-1",
+  contractId: "contract-1",
+  credits: 4,
+  expiresAt: "2026-10-13T18:00:00.000Z",
+  model: "google-nano-banana-2-lite",
+};
+
+const ACCEPTED = {
+  id: "generation-1",
+  status: "QUEUED",
+  queue: "FAST",
+  creditsCharged: 4,
+  model: "google-nano-banana-2-lite",
+  modelSource: "default",
+  webUrl: "https://pixelo.ai/app/gen/generation-1",
+};
+
+type Call = { url: string; method: string; body: Record<string, unknown> | null; idempotencyKey: string | null };
+
+function routedFetch(
+  calls: Call[],
+  routes: { quote?: () => Response; submit?: () => Response; status?: () => Response },
+) {
+  return mock(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url,
+      method: init?.method ?? "GET",
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+      idempotencyKey: headers.get("Idempotency-Key"),
+    });
+    if (url.endsWith("/api/v1/generation-quotes")) return (routes.quote ?? (() => jsonResponse(QUOTE)))();
+    if (url.endsWith("/api/v1/generations")) return (routes.submit ?? (() => jsonResponse(ACCEPTED, 202)))();
+    return (routes.status ?? (() => jsonResponse(completedStatus())))();
+  }) as unknown as typeof fetch;
+}
+
+async function captureFailure(run: () => Promise<unknown>): Promise<CliCommandError> {
+  try {
+    await run();
+  } catch (error) {
+    return error as CliCommandError;
+  }
+  throw new Error("expected the command to fail");
+}
+
 describe("stable generation command contract", () => {
   beforeEach(() => {
     temporaryRoot = mkdtempSync(join(tmpdir(), "pixelo-cli-generate-"));
@@ -77,15 +125,7 @@ describe("stable generation command contract", () => {
   });
 
   test("emits an accepted NDJSON envelope immediately with a recovery ID", async () => {
-    globalThis.fetch = mock(async () => jsonResponse({
-      id: "generation-1",
-      status: "QUEUED",
-      queue: "FAST",
-      creditsCharged: 4,
-      model: "google-nano-banana-2-lite",
-      modelSource: "default",
-      webUrl: "https://pixelo.ai/app/gen/generation-1",
-    })) as unknown as typeof fetch;
+    globalThis.fetch = routedFetch([], {});
 
     await generate("image", "a fox", { json: true, apiUrl: ORIGIN });
 
@@ -93,6 +133,7 @@ describe("stable generation command contract", () => {
     expect(JSON.parse(stdout[0])).toEqual({
       version: 1,
       outcome: "accepted",
+      idempotency_key: expect.any(String),
       generation: {
         id: "generation-1",
         kind: "image",
@@ -111,20 +152,7 @@ describe("stable generation command contract", () => {
   });
 
   test("emits ordered accepted and completed envelopes when waiting", async () => {
-    globalThis.fetch = mock(async (input: string | URL | Request) => {
-      if (String(input).endsWith("/api/v1/generations")) {
-        return jsonResponse({
-          id: "generation-1",
-          status: "QUEUED",
-          queue: "FAST",
-          creditsCharged: 4,
-          model: "google-nano-banana-2-lite",
-          modelSource: "default",
-          webUrl: "https://pixelo.ai/app/gen/generation-1",
-        });
-      }
-      return jsonResponse(completedStatus());
-    }) as unknown as typeof fetch;
+    globalThis.fetch = routedFetch([], {});
 
     await generate("image", "a fox", { json: true, wait: true, apiUrl: ORIGIN });
 
@@ -133,23 +161,12 @@ describe("stable generation command contract", () => {
   });
 
   test("shows the resolved model, a usable media URL, and the Pixelo asset page", async () => {
-    globalThis.fetch = mock(async (input: string | URL | Request) => {
-      if (String(input).endsWith("/api/v1/generations")) {
-        return jsonResponse({
-          id: "generation-1",
-          status: "QUEUED",
-          queue: "FAST",
-          creditsCharged: 4,
-          model: "google-nano-banana-2-lite",
-          modelSource: "default",
-          webUrl: "https://pixelo.ai/app/gen/generation-1",
-        });
-      }
-      return jsonResponse({
+    globalThis.fetch = routedFetch([], {
+      status: () => jsonResponse({
         ...completedStatus(),
         outputs: [{ url: "media/user-1/one.png", permanent: true, format: "png" }],
-      });
-    }) as unknown as typeof fetch;
+      }),
+    });
 
     await generate("image", "a fox", { wait: true, apiUrl: ORIGIN });
 
@@ -224,5 +241,106 @@ describe("stable generation command contract", () => {
     const terminal = JSON.parse(stdout.at(-1) || "{}");
     expect(terminal.outcome).toBe("polling_error");
     expect(terminal.recovery.generation_id).toBe("generation-1");
+  });
+
+  test("quotes the exact request and submits it with the quote", async () => {
+    const calls: Call[] = [];
+    globalThis.fetch = routedFetch(calls, {
+      quote: () => jsonResponse({ ...QUOTE, model: "fal-nano-banana-2", credits: 10 }),
+    });
+
+    await generate("image", "a fox", {
+      json: true,
+      apiUrl: ORIGIN,
+      model: "fal-nano-banana-2",
+      aspectRatio: "4:5",
+      count: 1,
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `${ORIGIN}/api/v1/generation-quotes`,
+      `${ORIGIN}/api/v1/generations`,
+    ]);
+    const request = { kind: "image", prompt: "a fox", model: "fal-nano-banana-2", aspectRatio: "4:5", count: 1 };
+    expect(calls[0].body).toEqual(request);
+    expect(calls[1].body).toEqual({ ...request, quoteId: "quote-1" });
+    expect(calls[1].idempotencyKey).toBeTruthy();
+    expect(JSON.parse(stdout[0]).outcome).toBe("accepted");
+  });
+
+  test("submits the model the quote resolved when --model is omitted", async () => {
+    const calls: Call[] = [];
+    globalThis.fetch = routedFetch(calls, {});
+
+    await generate("image", "a fox", { json: true, apiUrl: ORIGIN });
+
+    expect(calls[0].body).toEqual({ kind: "image", prompt: "a fox" });
+    expect(calls[1].body).toEqual({
+      kind: "image",
+      prompt: "a fox",
+      model: "google-nano-banana-2-lite",
+      quoteId: "quote-1",
+    });
+  });
+
+  test("refuses a quote above --max-credits without submitting", async () => {
+    const calls: Call[] = [];
+    globalThis.fetch = routedFetch(calls, { quote: () => jsonResponse({ ...QUOTE, credits: 90 }) });
+
+    const failure = await captureFailure(() =>
+      generate("video", "a fox", { json: true, apiUrl: ORIGIN, maxCredits: 50 }),
+    );
+
+    expect(failure.exitCode).toBe(2);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(stdout[0])).toEqual(expect.objectContaining({
+      outcome: "rejected",
+      submitted: false,
+      error: expect.objectContaining({ code: "QUOTE_OVER_BUDGET" }),
+      quote: expect.objectContaining({ credits: 90 }),
+    }));
+  });
+
+  test("sends a caller-supplied idempotency key", async () => {
+    const calls: Call[] = [];
+    globalThis.fetch = routedFetch(calls, {});
+
+    await generate("image", "a fox", { json: true, apiUrl: ORIGIN, idempotencyKey: "n8n-run-42" });
+
+    expect(calls[1].idempotencyKey).toBe("n8n-run-42");
+    expect(JSON.parse(stdout[0]).idempotency_key).toBe("n8n-run-42");
+  });
+
+  test("reports a server rejection as definitive with its code", async () => {
+    globalThis.fetch = routedFetch([], {
+      submit: () => jsonResponse({ error: "This quote expired; refresh before generating", code: "QUOTE_EXPIRED" }, 409),
+    });
+
+    const failure = await captureFailure(() => generate("image", "a fox", { json: true, apiUrl: ORIGIN }));
+
+    expect(failure.exitCode).toBe(2);
+    expect(JSON.parse(stdout[0])).toEqual(expect.objectContaining({
+      outcome: "rejected",
+      submitted: false,
+      error: expect.objectContaining({ code: "QUOTE_EXPIRED", status: 409 }),
+    }));
+  });
+
+  test("reports a lost submission as uncertain with the key needed to recover it", async () => {
+    globalThis.fetch = routedFetch([], {
+      submit: () => {
+        throw new TypeError("socket hang up");
+      },
+    });
+
+    const failure = await captureFailure(() =>
+      generate("image", "a fox", { json: true, apiUrl: ORIGIN, idempotencyKey: "n8n-run-43" }),
+    );
+
+    expect(failure.exitCode).toBe(4);
+    const envelope = JSON.parse(stdout[0]);
+    expect(envelope.outcome).toBe("uncertain");
+    expect(envelope.idempotency_key).toBe("n8n-run-43");
+    expect(envelope.recovery.hint).toContain("--idempotency-key n8n-run-43");
   });
 });

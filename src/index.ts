@@ -19,6 +19,11 @@ Usage:
   pixelo generations get <id> [--wait]    Check a generation's status
   pixelo account                          Show credits and billing context
 
+Generation flags:
+  --max-credits N          Refuse to submit if the quoted price is above N credits
+  --idempotency-key <key>  Reuse after an uncertain submission to recover it
+                           without a second charge (8-128 URL-safe characters)
+
 Global flags:
   --json          Machine-readable output
   --api-url <url> Override the API origin (or set PIXELO_API_URL)
@@ -83,6 +88,10 @@ export async function main(argv = process.argv.slice(2)) {
           count: typeof flags.count === "number" ? flags.count : undefined,
           duration: typeof flags.duration === "number" ? flags.duration : undefined,
           negativePrompt: flags["negative-prompt"] as string | undefined,
+          maxCredits: typeof flags["max-credits"] === "number" ? flags["max-credits"] : undefined,
+          idempotencyKey: flags["idempotency-key"] !== undefined && flags["idempotency-key"] !== true
+            ? String(flags["idempotency-key"])
+            : undefined,
           wait: flags.wait === true,
           json,
           apiUrl,
